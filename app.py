@@ -371,26 +371,48 @@ def render_color_legend():
         <span><span style="display:inline-block;width:14px;height:14px;background:#FFCC99;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>Inconsistência / Justificativa</span>
     </div>''', unsafe_allow_html=True)
 
-def style_detail_df(det_df):
-    """Aplica cores de linha conforme regra DU/inconsistência (igual ao Excel)"""
-    def row_style(row):
+def render_html_table(det_df, height=400, color_rows=True):
+    """Renderiza tabela HTML com cabeçalho vinho garantido e linhas coloridas"""
+    def row_colors(row):
         du = row.get("DU")
-        incons = row.get("Inconsistência","")
-        tipo = row.get("Tipo","")
-        if incons: bg, fg = "#FFCC99", "#000000"
-        elif tipo in ("AUDIÊNCIA DE JULGAMENTO","ACOMPANHAR JULGAMENTO"): bg, fg = "#C6EFCE", "#000000"
-        elif du is None or pd.isna(du): return [""] * len(row)
-        elif du < 0: bg, fg = "#CC0000", "#FFFFFF"
-        elif du == 0: bg, fg = "#FFC7CE", "#000000"
-        elif du == 1: bg, fg = "#FFEB9C", "#000000"
-        else: bg, fg = "#C6EFCE", "#000000"
-        return [f"background-color:{bg};color:{fg}"] * len(row)
-    styler = det_df.style.apply(row_style, axis=1)
-    styler = styler.set_table_styles([
-        {"selector": "th", "props": [("background-color","#7E1F2D"),("color","white"),
-                                      ("font-weight","600"),("font-size","11px")]},
-    ])
-    return styler
+        incons = str(row.get("Inconsistência","") or "")
+        tipo = str(row.get("Tipo","") or "")
+        if not color_rows: return "", ""
+        if incons and incons != "nan": return "#FFCC99", "#000000"
+        if tipo in ("AUDIÊNCIA DE JULGAMENTO","ACOMPANHAR JULGAMENTO"): return "#C6EFCE", "#000000"
+        try:
+            du = int(du)
+        except (TypeError, ValueError):
+            return "", ""
+        if du < 0: return "#CC0000", "#FFFFFF"
+        if du == 0: return "#FFC7CE", "#000000"
+        if du == 1: return "#FFEB9C", "#000000"
+        return "#C6EFCE", "#000000"
+
+    cols = det_df.columns.tolist()
+    thead = "".join(f"<th>{c}</th>" for c in cols)
+    rows_html = []
+    for _, row in det_df.iterrows():
+        bg, fg = row_colors(row)
+        style = f'style="background-color:{bg};color:{fg}"' if bg else ""
+        tds = "".join(f"<td>{'' if pd.isna(v) else v}</td>" for v in row.tolist())
+        rows_html.append(f"<tr {style}>{tds}</tr>")
+
+    html = f'''
+    <div style="max-height:{height}px;overflow:auto;border:1px solid #E5DAC7;border-radius:8px;background:white">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;font-family:\'Libre Franklin\',sans-serif">
+        <thead><tr style="position:sticky;top:0;z-index:2">{thead}</tr></thead>
+        <tbody>{"".join(rows_html)}</tbody>
+    </table></div>
+    <style>
+        thead th {{ background-color:#7E1F2D !important; color:white !important;
+                    padding:8px 10px; text-align:left; font-size:11px;
+                    letter-spacing:.05em; font-weight:600; white-space:nowrap;
+                    position:sticky; top:0; }}
+        tbody td {{ padding:6px 10px; border-bottom:1px solid #EDE5D4; vertical-align:top; }}
+        tbody tr:hover td {{ filter:brightness(.96); }}
+    </style>'''
+    st.markdown(html, unsafe_allow_html=True)
 
 # ── CHARTS ─────────────────────────────────────────────────────────────────
 def abbrev_name(name, max_words=2):
@@ -656,17 +678,13 @@ def page_coordenador(registros):
             })
         resumo_rows.sort(key=lambda x: -x["Total"])
         df_resumo = pd.DataFrame(resumo_rows)
-        styler_resumo = df_resumo.style.set_table_styles([
-            {"selector": "th", "props": [("background-color","#7E1F2D"),("color","white"),
-                                          ("font-weight","600"),("font-size","11px")]},
-        ])
-        st.dataframe(styler_resumo, use_container_width=True, hide_index=True)
+        render_html_table(df_resumo, height=350, color_rows=False)
 
     st.markdown('<div class="section-title">Detalhamento</div>', unsafe_allow_html=True)
     render_color_legend()
     det = active[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
     det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
-    st.dataframe(style_detail_df(det), use_container_width=True, hide_index=True, height=380)
+    render_html_table(det, height=380)
 
     buf = exportar_xlsx_filtrado(active.to_dict("records"))
     st.download_button("📥 Exportar Excel", buf, "IGSA_Filtrado.xlsx",
@@ -720,7 +738,7 @@ def page_responsavel(registros):
     render_color_legend()
     det = df[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
     det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
-    st.dataframe(style_detail_df(det), use_container_width=True, hide_index=True, height=450)
+    render_html_table(det, height=450)
 
     buf = exportar_xlsx_filtrado(df.to_dict("records"))
     st.download_button("📥 Exportar Excel", buf, f"IGSA_{resp_f[:30]}.xlsx",
@@ -768,7 +786,7 @@ def page_auditoria(registros):
     render_color_legend()
     det = df_inc[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
     det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
-    st.dataframe(style_detail_df(det), use_container_width=True, hide_index=True, height=450)
+    render_html_table(det, height=450)
 
     buf = exportar_xlsx_filtrado(df_inc.to_dict("records"))
     st.download_button("📥 Exportar Inconsistências", buf, "IGSA_Auditoria.xlsx",
@@ -863,13 +881,13 @@ def page_admin():
         st.markdown('<div class="section-title">⚠️ Sem Coordenador Mapeado</div>', unsafe_allow_html=True)
         sc_count = {}
         for r in sem_coord: sc_count[r["resp"]] = sc_count.get(r["resp"],0)+1
-        st.dataframe(pd.DataFrame([{"Responsável":k,"Qtd":v} for k,v in sorted(sc_count.items(),key=lambda x:-x[1])]),
-                     hide_index=True, use_container_width=True)
+        render_html_table(pd.DataFrame([{"Responsável":k,"Qtd":v} for k,v in sorted(sc_count.items(),key=lambda x:-x[1])]),
+                     height=250, color_rows=False)
         st.warning("Estes responsáveis não aparecerão nos painéis de coordenador.")
 
     if alertas:
         st.markdown('<div class="section-title">⚠️ Inconsistências Detectadas</div>', unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(alertas), hide_index=True, use_container_width=True, height=300)
+        render_html_table(pd.DataFrame(alertas), height=300, color_rows=False)
         tipos_inc = {}
         for a in alertas:
             for t in a["Inconsistência"].split(";"):
