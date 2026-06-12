@@ -35,6 +35,7 @@ COORD_MAP = {
 COORD_DISPLAY = {"TATIANA KOGAN": "CONTROLADORIA JURÍDICA"}
 INACTIVE_SET = {"ANA VITORIA SALES DE OLIVEIRA FALCAO","DALILA DRISANA GOMES GONCALVES","RODRIGO RIBEIRO ANTUNES QUARIGUASI","LUIZ GUILHERME GONCALVES GIRAO","EMERSON DE ALMEIDA MELO JUNIOR","JEAN VICTOR NUNES SARAIVA","YASMIM GORDIANO BARBOSA"}
 EXCLUDED_SET = {"TATIANA KOGAN","APARECIDO","CAMILLA GOES BARBOSA","MARIA LAURA MELO ALMEIDA","IRENE FLÁVIA SERENÁRIO","IRENE FLAVIA SERENARIO","IRENE FLÁVIA SERENARIO"}
+HIDDEN_COORDS = {"CAMILLA GOES BARBOSA","TATIANA KOGAN"}  # coordenadores ocultos dos painéis (Camilla e Controladoria Jurídica)
 COLUNAS_ESPERADAS = ["Id","Tipo","Descrição","Conclusão prevista","Responsável processo","Pasta","Status"]
 HOLIDAYS_2026 = ["2026-01-01","2026-04-21","2026-05-01","2026-09-07","2026-10-12","2026-11-02","2026-11-15","2026-12-25"]
 HOLIDAYS_NP = np.array(HOLIDAYS_2026, dtype="datetime64[D]")
@@ -94,7 +95,8 @@ def check_incons(tipo, desc, conclusao, fatal, aud):
     ref = fatal or aud
     if ref and conclusao and conclusao > ref:
         issues.append(f"Conclusão posterior à data da descrição ({ref.strftime('%d/%m/%Y')})")
-    if re.search(r"\d{5,}", d): issues.append("Ano inválido na descrição")
+    if tipo in ("Prazo","Audiência","Pauta de Julgamento","Perícia") and re.search(r"\d{5,}", d):
+        issues.append("Ano inválido na descrição")
     if tipo == "Prazo" and re.search(r"AUDIÊNCIA DE CONCILIAÇÃO", d, re.IGNORECASE):
         issues.append("Tipo Prazo com descrição de Audiência")
     if tipo == "Audiência" and re.search(r"PRAZO.*Protocolar", d, re.IGNORECASE):
@@ -367,7 +369,7 @@ def render_color_legend():
         <span><span style="display:inline-block;width:14px;height:14px;background:#C6EFCE;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>Dentro do prazo</span>
         <span><span style="display:inline-block;width:14px;height:14px;background:#FFEB9C;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>D-1 (agir hoje)</span>
         <span><span style="display:inline-block;width:14px;height:14px;background:#FFC7CE;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>Prazo fatal hoje</span>
-        <span><span style="display:inline-block;width:14px;height:14px;background:#CC0000;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span><span style="color:#CC0000;font-weight:600">Vencido / pendente de baixa</span></span>
+        <span><span style="display:inline-block;width:14px;height:14px;background:#E57373;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span><span style="color:#C62828;font-weight:600">Vencido / pendente de baixa</span></span>
         <span><span style="display:inline-block;width:14px;height:14px;background:#FFCC99;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>Inconsistência / Justificativa</span>
     </div>''', unsafe_allow_html=True)
 
@@ -384,7 +386,7 @@ def render_html_table(det_df, height=400, color_rows=True):
             du = int(du)
         except (TypeError, ValueError):
             return "", ""
-        if du < 0: return "#CC0000", "#FFFFFF"
+        if du < 0: return "#E57373", "#FFFFFF"
         if du == 0: return "#FFC7CE", "#000000"
         if du == 1: return "#FFEB9C", "#000000"
         return "#C6EFCE", "#000000"
@@ -547,6 +549,7 @@ def get_df_filters(registros, prefix):
     df["conclusao_dt"] = pd.to_datetime(df["conclusao_iso"])
     # Filter out nan/empty resp
     df = df[df["resp"].notna() & (df["resp"] != "") & (df["resp"] != "nan")]
+    df = df[~df["coord"].isin(HIDDEN_COORDS)]
     return df
 
 def apply_common_filters(df, prefix):
@@ -803,7 +806,7 @@ def page_exportacao(registros):
     rows = registros
     if dt_ini: rows = [r for r in rows if r["conclusao_iso"] >= dt_ini.isoformat()]
     if dt_fim: rows = [r for r in rows if r["conclusao_iso"] <= dt_fim.isoformat()]
-    active = [r for r in rows if r["resp"] not in EXCLUDED_SET and r["resp"] not in ("","nan","(Sem responsável)")]
+    active = [r for r in rows if r["resp"] not in EXCLUDED_SET and r["resp"] not in ("","nan","(Sem responsável)") and r["coord"] not in HIDDEN_COORDS]
 
     st.markdown('<div class="section-title">Exportar por Coordenador</div>', unsafe_allow_html=True)
     coords = sorted(set(r["coord"] for r in active))
