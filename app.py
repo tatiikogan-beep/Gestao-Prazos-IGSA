@@ -358,47 +358,102 @@ def card(kicker, value, label, color=""):
     </div>'''
 
 # ── CHARTS ─────────────────────────────────────────────────────────────────
+def abbrev_name(name, max_words=2):
+    """Abrevia nome: 'JULIANA MIRELLA ALVES RODRIGUES' -> 'JULIANA M.'"""
+    parts = str(name).split()
+    if len(parts) <= 1: return name
+    if name == "CONTROLADORIA JURÍDICA": return "CONTROLADORIA"
+    if name == "SEM COORDENADOR": return "SEM COORD."
+    return parts[0] + " " + parts[1][0] + "."
+
 def chart_bar_v(df_data, x_col, y_col, title, colors=None):
-    """Vertical bar chart using Altair-style via st.bar_chart with custom colors via plotly workaround"""
+    """Barra vertical com rótulos de dados visíveis"""
     if df_data.empty: return
     import altair as alt
+    df_plot = df_data.copy()
+    df_plot["_label"] = df_plot[x_col].apply(abbrev_name)
+    df_plot["_valor_fmt"] = df_plot[y_col].apply(fmt_num)
     color_list = colors or WINE_COLORS
-    n = len(df_data)
-    color_map = {row[x_col]: color_list[i % len(color_list)] for i, row in df_data.iterrows()}
-    chart = alt.Chart(df_data).mark_bar(cornerRadiusTopLeft=4,cornerRadiusTopRight=4).encode(
-        x=alt.X(f"{x_col}:N", sort="-y", axis=alt.Axis(labelAngle=-35,labelLimit=120,labelFontSize=11)),
-        y=alt.Y(f"{y_col}:Q", axis=alt.Axis(labelFontSize=11)),
-        color=alt.Color(f"{x_col}:N", scale=alt.Scale(domain=list(color_map.keys()), range=list(color_map.values())), legend=None),
-        tooltip=[x_col, y_col]
-    ).properties(height=280).configure_axis(grid=True,gridColor="#EDE5D4").configure_view(strokeWidth=0)
-    st.altair_chart(chart, use_container_width=True)
+    domain = df_plot["_label"].tolist()
+    range_colors = [color_list[i % len(color_list)] for i in range(len(domain))]
+
+    base = alt.Chart(df_plot).encode(
+        x=alt.X("_label:N", sort="-y", title=None,
+                axis=alt.Axis(labelAngle=-30, labelLimit=110, labelFontSize=11)),
+        y=alt.Y(f"{y_col}:Q", title=None, axis=alt.Axis(labelFontSize=11)),
+        tooltip=[alt.Tooltip(x_col, title="Coordenador"), alt.Tooltip(y_col, format=",")]
+    )
+    bars = base.mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+        color=alt.Color("_label:N", scale=alt.Scale(domain=domain, range=range_colors), legend=None)
+    )
+    labels = base.mark_text(
+        align="center", baseline="bottom", dy=-4,
+        fontSize=13, fontWeight="bold", color="#2A2420"
+    ).encode(text="_valor_fmt:N")
+
+    st.altair_chart(
+        (bars + labels).properties(height=300)
+        .configure_axis(grid=True, gridColor="#EDE5D4")
+        .configure_view(strokeWidth=0),
+        use_container_width=True
+    )
 
 def chart_bar_h(df_data, x_col, y_col, title, color="#7E1F2D"):
+    """Barra horizontal com rótulos de dados visíveis"""
     if df_data.empty: return
     import altair as alt
-    chart = alt.Chart(df_data).mark_bar(color=color,cornerRadiusTopRight=4,cornerRadiusBottomRight=4).encode(
-        y=alt.Y(f"{y_col}:N", sort="-x", axis=alt.Axis(labelLimit=200,labelFontSize=11)),
-        x=alt.X(f"{x_col}:Q", axis=alt.Axis(labelFontSize=11)),
-        tooltip=[y_col, x_col]
-    ).properties(height=320).configure_axis(grid=True,gridColor="#EDE5D4").configure_view(strokeWidth=0)
-    st.altair_chart(chart, use_container_width=True)
+    df_plot = df_data.copy()
+    df_plot["_valor_fmt"] = df_plot[x_col].apply(fmt_num)
+
+    base = alt.Chart(df_plot).encode(
+        y=alt.Y(f"{y_col}:N", sort="-x", title=None,
+                axis=alt.Axis(labelLimit=220, labelFontSize=11)),
+        x=alt.X(f"{x_col}:Q", title=None,
+                axis=alt.Axis(labelFontSize=11)),
+        tooltip=[alt.Tooltip(y_col), alt.Tooltip(x_col, format=",")]
+    )
+    bars = base.mark_bar(color=color, cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
+    labels = base.mark_text(
+        align="left", baseline="middle", dx=5,
+        fontSize=13, fontWeight="bold", color="#2A2420"
+    ).encode(text="_valor_fmt:N")
+
+    st.altair_chart(
+        (bars + labels).properties(height=330)
+        .configure_axis(grid=True, gridColor="#EDE5D4")
+        .configure_view(strokeWidth=0),
+        use_container_width=True
+    )
 
 def chart_donut(labels, values, title):
+    """Rosca com raio ajustado para não cortar + total central"""
     if not values: return
     import altair as alt
-    df_d = pd.DataFrame({"Tipo":labels,"Qtd":values})
+    df_d = pd.DataFrame({"Tipo": labels, "Qtd": values})
+    df_d["_pct"] = (df_d["Qtd"] / df_d["Qtd"].sum() * 100).round(1)
+    df_d["_label"] = df_d.apply(lambda r: fmt_num(int(r["Qtd"])) if r["_pct"] >= 4 else "", axis=1)
     total = sum(values)
+
     base = alt.Chart(df_d).encode(
-        theta=alt.Theta("Qtd:Q",stack=True),
-        color=alt.Color("Tipo:N", scale=alt.Scale(range=MULTI_COLORS),
-                        legend=alt.Legend(orient="bottom",labelFontSize=11,titleFontSize=11)),
-        tooltip=["Tipo","Qtd"]
+        theta=alt.Theta("Qtd:Q", stack=True),
+        color=alt.Color("Tipo:N",
+            scale=alt.Scale(range=MULTI_COLORS),
+            legend=alt.Legend(orient="bottom", columns=4, labelFontSize=11, titleFontSize=11, title=None)),
+        tooltip=["Tipo", alt.Tooltip("Qtd", format=","), alt.Tooltip("_pct", title="%")]
     )
-    pie = base.mark_arc(innerRadius=70, outerRadius=120)
-    text = alt.Chart(pd.DataFrame({"label":[f"Total\n{fmt_num(total)}"]})).mark_text(
-        size=14, fontWeight="bold", color="#2A2420"
-    ).encode(text="label:N")
-    st.altair_chart((pie+text).properties(height=300).configure_view(strokeWidth=0), use_container_width=True)
+    pie = base.mark_arc(innerRadius=62, outerRadius=105)
+    slice_labels = base.mark_text(radius=125, fontSize=12, fontWeight="bold", color="#2A2420").encode(
+        text="_label:N"
+    )
+    center = alt.Chart(pd.DataFrame({"t": [f"Total {fmt_num(total)}"]})).mark_text(
+        size=15, fontWeight="bold", color="#2A2420"
+    ).encode(text="t:N")
+
+    st.altair_chart(
+        (pie + slice_labels + center).properties(height=360, padding={"top": 20, "bottom": 10})
+        .configure_view(strokeWidth=0),
+        use_container_width=True
+    )
 
 # ── SIDEBAR ────────────────────────────────────────────────────────────────
 def render_sidebar():
@@ -496,6 +551,14 @@ def page_geral(registros):
                  .sort_values("Qtd", ascending=False).head(10))
         top10.columns = ["Responsável","Qtd"]
         chart_bar_h(top10, "Qtd", "Responsável", "Top 10", "#7E1F2D")
+
+    incons_df = active[active.incons != ""]
+    if not incons_df.empty:
+        st.markdown('<div class="section-title">Top 10 Responsáveis — Inconsistências</div>', unsafe_allow_html=True)
+        top_inc = (incons_df.groupby("resp").size().reset_index(name="Qtd")
+                   .sort_values("Qtd", ascending=False).head(10))
+        top_inc.columns = ["Responsável","Qtd"]
+        chart_bar_h(top_inc, "Qtd", "Responsável", "Top Inconsistências", "#CDA736")
 
 def page_coordenador(registros):
     render_header("Por Coordenador")
