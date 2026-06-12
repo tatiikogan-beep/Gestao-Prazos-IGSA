@@ -357,6 +357,41 @@ def card(kicker, value, label, color=""):
         <div class="metric-label">{label}</div>
     </div>'''
 
+def render_color_legend():
+    """Legenda do significado das cores dos relatórios"""
+    st.markdown('''
+    <div style="background:white;border:1px solid #E5DAC7;border-radius:8px;
+                padding:10px 16px;margin:8px 0 14px;display:flex;flex-wrap:wrap;
+                gap:14px;align-items:center;font-size:11px">
+        <strong style="color:#7E1F2D;letter-spacing:.06em;font-size:10px">LEGENDA DE CORES:</strong>
+        <span><span style="display:inline-block;width:14px;height:14px;background:#C6EFCE;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>Dentro do prazo</span>
+        <span><span style="display:inline-block;width:14px;height:14px;background:#FFEB9C;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>D-1 (agir hoje)</span>
+        <span><span style="display:inline-block;width:14px;height:14px;background:#FFC7CE;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>Prazo fatal hoje</span>
+        <span><span style="display:inline-block;width:14px;height:14px;background:#CC0000;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span><span style="color:#CC0000;font-weight:600">Vencido / pendente de baixa</span></span>
+        <span><span style="display:inline-block;width:14px;height:14px;background:#FFCC99;border:1px solid #999;border-radius:3px;vertical-align:middle;margin-right:4px"></span>Inconsistência / Justificativa</span>
+    </div>''', unsafe_allow_html=True)
+
+def style_detail_df(det_df):
+    """Aplica cores de linha conforme regra DU/inconsistência (igual ao Excel)"""
+    def row_style(row):
+        du = row.get("DU")
+        incons = row.get("Inconsistência","")
+        tipo = row.get("Tipo","")
+        if incons: bg, fg = "#FFCC99", "#000000"
+        elif tipo in ("AUDIÊNCIA DE JULGAMENTO","ACOMPANHAR JULGAMENTO"): bg, fg = "#C6EFCE", "#000000"
+        elif du is None or pd.isna(du): return [""] * len(row)
+        elif du < 0: bg, fg = "#CC0000", "#FFFFFF"
+        elif du == 0: bg, fg = "#FFC7CE", "#000000"
+        elif du == 1: bg, fg = "#FFEB9C", "#000000"
+        else: bg, fg = "#C6EFCE", "#000000"
+        return [f"background-color:{bg};color:{fg}"] * len(row)
+    styler = det_df.style.apply(row_style, axis=1)
+    styler = styler.set_table_styles([
+        {"selector": "th", "props": [("background-color","#7E1F2D"),("color","white"),
+                                      ("font-weight","600"),("font-size","11px")]},
+    ])
+    return styler
+
 # ── CHARTS ─────────────────────────────────────────────────────────────────
 def abbrev_name(name, max_words=2):
     """Abrevia nome: 'JULIANA MIRELLA ALVES RODRIGUES' -> 'JULIANA M.'"""
@@ -380,7 +415,8 @@ def chart_bar_v(df_data, x_col, y_col, title, colors=None):
     base = alt.Chart(df_plot).encode(
         x=alt.X("_label:N", sort="-y", title=None,
                 axis=alt.Axis(labelAngle=-30, labelLimit=110, labelFontSize=11)),
-        y=alt.Y(f"{y_col}:Q", title=None, axis=alt.Axis(labelFontSize=11)),
+        y=alt.Y(f"{y_col}:Q", title=None, axis=alt.Axis(labelFontSize=11),
+                scale=alt.Scale(domain=[0, float(df_plot[y_col].max()) * 1.12])),
         tooltip=[alt.Tooltip(x_col, title="Coordenador"), alt.Tooltip(y_col, format=",")]
     )
     bars = base.mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
@@ -409,7 +445,8 @@ def chart_bar_h(df_data, x_col, y_col, title, color="#7E1F2D"):
         y=alt.Y(f"{y_col}:N", sort="-x", title=None,
                 axis=alt.Axis(labelLimit=220, labelFontSize=11)),
         x=alt.X(f"{x_col}:Q", title=None,
-                axis=alt.Axis(labelFontSize=11)),
+                axis=alt.Axis(labelFontSize=11),
+                scale=alt.Scale(domain=[0, float(df_plot[x_col].max()) * 1.18])),
         tooltip=[alt.Tooltip(y_col), alt.Tooltip(x_col, format=",")]
     )
     bars = base.mark_bar(color=color, cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
@@ -426,31 +463,32 @@ def chart_bar_h(df_data, x_col, y_col, title, color="#7E1F2D"):
     )
 
 def chart_donut(labels, values, title):
-    """Rosca com raio ajustado para não cortar + total central"""
+    """Rosca sem cortes: raio reduzido, rótulos internos, legenda separada"""
     if not values: return
     import altair as alt
     df_d = pd.DataFrame({"Tipo": labels, "Qtd": values})
-    df_d["_pct"] = (df_d["Qtd"] / df_d["Qtd"].sum() * 100).round(1)
-    df_d["_label"] = df_d.apply(lambda r: fmt_num(int(r["Qtd"])) if r["_pct"] >= 4 else "", axis=1)
     total = sum(values)
+    df_d["_pct"] = (df_d["Qtd"] / total * 100).round(1)
+    df_d["_label"] = df_d.apply(lambda r: fmt_num(int(r["Qtd"])) if r["_pct"] >= 5 else "", axis=1)
 
     base = alt.Chart(df_d).encode(
         theta=alt.Theta("Qtd:Q", stack=True),
         color=alt.Color("Tipo:N",
             scale=alt.Scale(range=MULTI_COLORS),
-            legend=alt.Legend(orient="bottom", columns=4, labelFontSize=11, titleFontSize=11, title=None)),
+            legend=alt.Legend(orient="right", labelFontSize=11, titleFontSize=11,
+                              title=None, symbolSize=80, rowPadding=4)),
         tooltip=["Tipo", alt.Tooltip("Qtd", format=","), alt.Tooltip("_pct", title="%")]
     )
-    pie = base.mark_arc(innerRadius=62, outerRadius=105)
-    slice_labels = base.mark_text(radius=125, fontSize=12, fontWeight="bold", color="#2A2420").encode(
+    pie = base.mark_arc(innerRadius=55, outerRadius=95)
+    slice_labels = base.mark_text(radius=75, fontSize=11, fontWeight="bold", color="white").encode(
         text="_label:N"
     )
     center = alt.Chart(pd.DataFrame({"t": [f"Total {fmt_num(total)}"]})).mark_text(
-        size=15, fontWeight="bold", color="#2A2420"
+        size=14, fontWeight="bold", color="#2A2420"
     ).encode(text="t:N")
 
     st.altair_chart(
-        (pie + slice_labels + center).properties(height=360, padding={"top": 20, "bottom": 10})
+        (pie + slice_labels + center).properties(height=300)
         .configure_view(strokeWidth=0),
         use_container_width=True
     )
@@ -617,12 +655,18 @@ def page_coordenador(registros):
                 "Inconsistências": int((grp["incons"]!="").sum()),
             })
         resumo_rows.sort(key=lambda x: -x["Total"])
-        st.dataframe(pd.DataFrame(resumo_rows), use_container_width=True, hide_index=True)
+        df_resumo = pd.DataFrame(resumo_rows)
+        styler_resumo = df_resumo.style.set_table_styles([
+            {"selector": "th", "props": [("background-color","#7E1F2D"),("color","white"),
+                                          ("font-weight","600"),("font-size","11px")]},
+        ])
+        st.dataframe(styler_resumo, use_container_width=True, hide_index=True)
 
     st.markdown('<div class="section-title">Detalhamento</div>', unsafe_allow_html=True)
+    render_color_legend()
     det = active[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
     det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
-    st.dataframe(det, use_container_width=True, hide_index=True, height=380)
+    st.dataframe(style_detail_df(det), use_container_width=True, hide_index=True, height=380)
 
     buf = exportar_xlsx_filtrado(active.to_dict("records"))
     st.download_button("📥 Exportar Excel", buf, "IGSA_Filtrado.xlsx",
@@ -673,9 +717,10 @@ def page_responsavel(registros):
             "Com alertas" if incons else "Sem alertas","rose" if incons else "green"), unsafe_allow_html=True)
 
     st.markdown('<div class="section-title">Atividades</div>', unsafe_allow_html=True)
+    render_color_legend()
     det = df[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
     det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
-    st.dataframe(det, use_container_width=True, hide_index=True, height=450)
+    st.dataframe(style_detail_df(det), use_container_width=True, hide_index=True, height=450)
 
     buf = exportar_xlsx_filtrado(df.to_dict("records"))
     st.download_button("📥 Exportar Excel", buf, f"IGSA_{resp_f[:30]}.xlsx",
@@ -720,9 +765,10 @@ def page_auditoria(registros):
         with cols[i]: st.markdown(card(t[:35],fmt_num(v),"ocorrências","gold"), unsafe_allow_html=True)
 
     st.markdown('<div class="section-title">Registros com Inconsistências</div>', unsafe_allow_html=True)
+    render_color_legend()
     det = df_inc[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
     det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
-    st.dataframe(det, use_container_width=True, hide_index=True, height=450)
+    st.dataframe(style_detail_df(det), use_container_width=True, hide_index=True, height=450)
 
     buf = exportar_xlsx_filtrado(df_inc.to_dict("records"))
     st.download_button("📥 Exportar Inconsistências", buf, "IGSA_Auditoria.xlsx",
