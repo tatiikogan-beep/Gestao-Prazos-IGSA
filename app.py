@@ -22,7 +22,7 @@ COORD_MAP = {
     "GABRIEL GIORGIO CICCHELERO": ["GABRIEL GIORGIO CICCHELERO","ALYSSON NARBAL DE OLIVEIRA SOMBRA","ANA VITORIA SALES DE OLIVEIRA FALCAO","DALILA DRISANA GOMES GONCALVES","JAMILE BARRETO","JULIANA DE OLIVEIRA ROCHA","RAFAEL CAVALCANTE BARBOSA","RODRIGO RIBEIRO ANTUNES QUARIGUASI"],
     "SUZANA MARIA CAMPOS MARANHAO DE LIMA": ["SUZANA MARIA CAMPOS MARANHAO DE LIMA","SUZANA MARIA CAMPOS MARANHAO DE LIMA","SUZANA MARIA CAMPOS MARANHÃO DE LIMA","EVILANY GABRIELA BRAGA PONTES","FRANCOISE CATHERINE SOUZA ALVES","GIOVANNA CAMPOS PEREIRA","MATHEUS CAVALCANTI DE ARAUJO","TATIANE CARMO SANTA ROSA"],
     "YURI ALVES BARROS DOS SANTOS": ["YURI ALVES BARROS DOS SANTOS","JÚLIA MENEZES MORGADO","JULIA MENEZES MORGADO","LUIZ GUILHERME GONCALVES GIRAO"],
-    "NAYANDERSON LUAN MELLO PINHEIRO": ["NAYANDERSON LUAN MELLO PINHEIRO","ANDRE VIANA GARRIDO","EMERSON DE ALMEIDA MELO JUNIOR","EMERSON TRAVASSOS TORQUATO","JEAN VICTOR NUNES SARAIVA"],
+    "NAYANDERSON LUAN MELLO PINHEIRO": ["NAYANDERSON LUAN MELLO PINHEIRO","ANDRE VIANA GARRIDO","EMERSON DE ALMEIDA MELO JUNIOR","EMERSON DE ALMEIDA MELO JÚNIOR","EMERSON TRAVASSOS TORQUATO","JEAN VICTOR NUNES SARAIVA"],
     "RONALD FEITOSA AGUIAR FILHO": ["RONALD FEITOSA AGUIAR FILHO","ALEXIA ALENCAR CAPIBARIBE"],
     "LUCIANE MODERNEL MENDES": ["LUCIANE MODERNEL MENDES","ANTONIO EDUARDO GOES AGUIAR FILHO","ERIKA PAULA SANTOS LIMA","SANE BORGES BORGOMONI"],
     "JENIFFER ROSA BARBOSA DE SALES": ["JENIFFER ROSA BARBOSA DE SALES","PAULO MARCIO SOARES DE CARVALHO FILHO"],
@@ -144,7 +144,18 @@ def construir_registros(df, today):
         processo = pasta if pasta and pasta not in ("","nan","None") else id_
         tipo = str(row.get("Tipo","")).strip()
         desc = str(row.get("Descrição","")).strip()
-        resp = str(row.get("Responsável processo","")).strip()
+        resp = str(row.get("Responsavel processo","") or row.get("Responsável processo","")).strip()
+        if not resp or resp in ("nan","None"):
+            resp = ""
+        # Fallback: campo Envolvidos / Nome quando Responsável estiver em branco
+        if not resp:
+            env_raw = str(row.get("Envolvidos / Nome","") or "").strip()
+            if env_raw and env_raw not in ("nan","None",""):
+                import re as _re
+                candidates = [n.strip() for n in _re.split(r"[;,|\n]", env_raw) if n.strip()]
+                if candidates:
+                    mapped = next((c for c in candidates if c in RESP_TO_COORD), None)
+                    resp = mapped if mapped else candidates[0]
         status = str(row.get("Status","")).strip()
         key = f"{id_}|{conclusao}|{tipo}|{resp}"
         if key in seen: continue
@@ -156,14 +167,23 @@ def construir_registros(df, today):
         incons = check_incons(tipo, desc, conclusao, fatal, aud)
         inativo = resp in INACTIVE_SET
         if incons:
-            alertas.append({"Id":id_,"Processo":processo,"Tipo":tipo,
+            alertas.append({"Id":id_,"Processo":processo,
+                "Cliente":str(row.get("Cliente","") or "").strip(),
+                "Número do Processo":str(row.get("Número do processo","") or "").strip(),
+                "Tipo":tipo,
                 "Responsável":resp or "(Sem responsável)","Coordenador":coord_display,
                 "Conclusão":conclusao.strftime("%d/%m/%Y"),"DU":du,"Inconsistência":incons})
+        cliente = str(row.get("Cliente","") or "").strip()
+        if cliente in ("nan","None"): cliente = ""
+        num_proc = str(row.get("Número do processo","") or "").strip()
+        if num_proc in ("nan","None"): num_proc = ""
+
         registros.append({"id":id_,"processo":processo,"tipo":tipo,"desc":desc[:300],
             "status":status,"resp":resp or "(Sem responsável)",
             "coord":coord_raw,"coord_display":coord_display,
             "conclusao":conclusao.strftime("%d/%m/%Y"),"conclusao_iso":conclusao.isoformat(),
-            "du":du,"inativo":inativo,"incons":incons})
+            "du":du,"inativo":inativo,"incons":incons,
+            "cliente":cliente,"num_proc":num_proc})
     registros.sort(key=lambda r: (r["conclusao_iso"], r["resp"], r["processo"]))
     return registros, alertas
 
@@ -208,7 +228,7 @@ def apply_row_style(ws, row_num, du, incons, tipo, num_cols):
         ws.cell(row=row_num, column=col).fill = fill
         ws.cell(row=row_num, column=col).font = font
 
-COLS_DETAIL = ["Processo","Tipo","Descrição","Coordenador","Responsável","Status","Conclusão Prevista","Dias Úteis","Inconsistência"]
+COLS_DETAIL = ["Processo","Cliente","Número do Processo","Tipo","Descrição","Coordenador","Responsável","Status","Conclusão Prevista","Dias Úteis","Inconsistência"]
 COLS_RESUMO = ["Responsável","Status","Prazo","Audiência","Diversos","Workflow","Publicação","Outros","Total","Inconsistências"]
 
 def write_sheet(ws, data_rows, cols, is_resumo=False):
@@ -261,7 +281,9 @@ def gerar_excel_coord(coord_key, registros, coord_display):
     write_sheet(ws_res, resumo_rows, COLS_RESUMO, is_resumo=True)
 
     def to_detail(r):
-        return {"Processo":r["processo"],"Tipo":r["tipo"],"Descrição":r["desc"],
+        return {"Processo":r["processo"],"Cliente":r.get("cliente",""),
+                "Número do Processo":r.get("num_proc",""),
+                "Tipo":r["tipo"],"Descrição":r["desc"],
                 "Coordenador":r["coord_display"],"Responsável":r["resp"],"Status":r["status"],
                 "Conclusão Prevista":r["conclusao"],"Dias Úteis":r["du"],"Inconsistência":r["incons"]}
 
@@ -283,7 +305,8 @@ def exportar_xlsx_filtrado(rows):
         c = ws.cell(row=1, column=ci, value=col)
         c.fill=hfill; c.font=hfont; c.alignment=halign
     for ri, r in enumerate(rows, 2):
-        vals = [r.get("processo",""),r.get("tipo",""),r.get("desc",""),
+        vals = [r.get("processo",""),r.get("cliente",""),r.get("num_proc",""),
+                r.get("tipo",""),r.get("desc",""),
                 r.get("coord_display",r.get("coord","")),r.get("resp",""),r.get("status",""),
                 r.get("conclusao",""),r.get("du",""),r.get("incons","")]
         for ci,v in enumerate(vals,1):
@@ -299,7 +322,8 @@ def exportar_xlsx_filtrado(rows):
 def exportar_csv(rows):
     lines = [";".join(COLS_DETAIL)]
     for r in rows:
-        vals = [r.get("processo",""),r.get("tipo",""),r.get("desc","").replace(";",","),
+        vals = [r.get("processo",""),r.get("cliente",""),r.get("num_proc",""),
+                r.get("tipo",""),r.get("desc","").replace(";",","),
                 r.get("coord_display",r.get("coord","")),r.get("resp",""),r.get("status",""),
                 r.get("conclusao",""),str(r.get("du","")),r.get("incons","")]
         lines.append(";".join(f'"{v}"' for v in vals))
@@ -685,8 +709,8 @@ def page_coordenador(registros):
 
     st.markdown('<div class="section-title">Detalhamento</div>', unsafe_allow_html=True)
     render_color_legend()
-    det = active[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
-    det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
+    det = active[["processo","cliente","num_proc","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
+    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
     render_html_table(det, height=380)
 
     buf = exportar_xlsx_filtrado(active.to_dict("records"))
@@ -739,8 +763,8 @@ def page_responsavel(registros):
 
     st.markdown('<div class="section-title">Atividades</div>', unsafe_allow_html=True)
     render_color_legend()
-    det = df[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
-    det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
+    det = df[["processo","cliente","num_proc","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
+    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
     render_html_table(det, height=450)
 
     buf = exportar_xlsx_filtrado(df.to_dict("records"))
@@ -787,8 +811,8 @@ def page_auditoria(registros):
 
     st.markdown('<div class="section-title">Registros com Inconsistências</div>', unsafe_allow_html=True)
     render_color_legend()
-    det = df_inc[["processo","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
-    det.columns = ["Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
+    det = df_inc[["processo","cliente","num_proc","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
+    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
     render_html_table(det, height=450)
 
     buf = exportar_xlsx_filtrado(df_inc.to_dict("records"))
