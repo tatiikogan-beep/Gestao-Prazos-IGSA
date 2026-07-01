@@ -234,8 +234,8 @@ def apply_row_style(ws, row_num, du, incons, tipo, num_cols):
         ws.cell(row=row_num, column=col).fill = fill
         ws.cell(row=row_num, column=col).font = font
 
-COLS_DETAIL = ["Processo","Cliente","Número do Processo","Tipo","Descrição","Coordenador","Responsável","Status","Conclusão Prevista","Dias Úteis","Inconsistência"]
-COLS_RESUMO = ["Responsável","Status","Prazo","Audiência","Diversos","Pauta de Julgamento","Perícia","Publicação","Outros","Total","Inconsistências"]
+COLS_DETAIL = ["Processo","Cliente","Número do Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão Prevista","Inconsistência"]
+COLS_RESUMO = ["Responsável","Prazo","Audiência","Diversos","Pauta de Julgamento","Perícia","Publicação","Total","Inconsistências"]
 
 def write_sheet(ws, data_rows, cols, is_resumo=False):
     hfill = make_header_fill(); hfont = make_header_font(); halign = make_header_align()
@@ -270,16 +270,16 @@ def gerar_excel_coord(coord_key, registros, coord_display):
     for r in rows:
         rp = r["resp"]
         if rp not in by_resp:
-            by_resp[rp] = {"Responsável":rp,"Status":"Inativo" if r["inativo"] else "Ativo",
-                           "Prazo":0,"Audiência":0,"Diversos":0,"Pauta de Julgamento":0,"Perícia":0,"Publicação":0,"Outros":0,"Total":0,"Inconsistências":0}
+            by_resp[rp] = {"Responsável":rp,
+                           "Prazo":0,"Audiência":0,"Diversos":0,"Pauta de Julgamento":0,"Perícia":0,"Publicação":0,"Total":0,"Inconsistências":0}
         t = r["tipo"]
-        if t in ("Prazo","Audiência","Diversos","Pauta de Julgamento","Perícia","Publicação"): by_resp[rp][t] += 1
-        else: by_resp[rp]["Outros"] += 1
+        if t in ("Prazo","Audiência","Pauta de Julgamento","Perícia","Publicação"): by_resp[rp][t] += 1
+        else: by_resp[rp]["Diversos"] += 1
         by_resp[rp]["Total"] += 1
         if r["incons"]: by_resp[rp]["Inconsistências"] += 1
     resumo_rows = sorted(by_resp.values(), key=lambda x: -x["Total"])
     tot = {c: sum(r.get(c,0) for r in resumo_rows if isinstance(r.get(c,0),int))
-           for c in ["Prazo","Audiência","Diversos","Workflow","Publicação","Outros","Total","Inconsistências"]}
+           for c in ["Prazo","Audiência","Diversos","Pauta de Julgamento","Perícia","Publicação","Total","Inconsistências"]}
     tot["Responsável"] = "TOTAL"; tot["Status"] = ""
     resumo_rows.append(tot)
 
@@ -290,8 +290,8 @@ def gerar_excel_coord(coord_key, registros, coord_display):
         return {"Processo":r["processo"],"Cliente":r.get("cliente",""),
                 "Número do Processo":r.get("num_proc",""),
                 "Tipo":r["tipo"],"Descrição":r["desc"],
-                "Coordenador":r["coord_display"],"Responsável":r["resp"],"Status":r["status"],
-                "Conclusão Prevista":r["conclusao"],"Dias Úteis":r["du"],"Inconsistência":r["incons"]}
+                "Coordenador":r["coord_display"],"Responsável":r["resp"],
+                "Conclusão Prevista":r["conclusao"],"Inconsistência":r["incons"]}
 
     for tipo_key, nome_aba in [("Prazo","Prazos"),("Audiência","Audiências"),("Diversos","Diversos")]:
         ws = wb.create_sheet(nome_aba)
@@ -313,8 +313,8 @@ def exportar_xlsx_filtrado(rows):
     for ri, r in enumerate(rows, 2):
         vals = [r.get("processo",""),r.get("cliente",""),r.get("num_proc",""),
                 r.get("tipo",""),r.get("desc",""),
-                r.get("coord_display",r.get("coord","")),r.get("resp",""),r.get("status",""),
-                r.get("conclusao",""),r.get("du",""),r.get("incons","")]
+                r.get("coord_display",r.get("coord","")),r.get("resp",""),
+                r.get("conclusao",""),r.get("incons","")]
         for ci,v in enumerate(vals,1):
             cell = ws.cell(row=ri, column=ci, value=v)
             cell.font=Font(size=10); cell.alignment=Alignment(vertical="top",wrap_text=(ci==3))
@@ -330,8 +330,8 @@ def exportar_csv(rows):
     for r in rows:
         vals = [r.get("processo",""),r.get("cliente",""),r.get("num_proc",""),
                 r.get("tipo",""),r.get("desc","").replace(";",","),
-                r.get("coord_display",r.get("coord","")),r.get("resp",""),r.get("status",""),
-                r.get("conclusao",""),str(r.get("du","")),r.get("incons","")]
+                r.get("coord_display",r.get("coord","")),r.get("resp",""),
+                r.get("conclusao",""),r.get("incons","")]
         lines.append(";".join(f'"{v}"' for v in vals))
     return ("\uFEFF" + "\n".join(lines)).encode("utf-8")
 
@@ -383,12 +383,14 @@ def render_header(subtitle=""):
     </div>""", unsafe_allow_html=True)
 
 def card(kicker, value, label="", color=""):
-    label_html = f'<div class="metric-label">{label}</div>' if label else ""
-    return f'''<div class="metric-card {color}">
-        <div class="metric-kicker">{kicker}</div>
-        <div class="metric-value">{value}</div>
-        {label_html}
-    </div>'''
+    label_part = f'<div class="metric-label">{label}</div>' if label else ""
+    return (
+        f'<div class="metric-card {color}">' +
+        f'<div class="metric-kicker">{kicker}</div>' +
+        f'<div class="metric-value">{value}</div>' +
+        label_part +
+        '</div>'
+    )
 
 def render_color_legend():
     """Legenda do significado das cores dos relatórios"""
@@ -407,7 +409,7 @@ def render_color_legend():
 def render_html_table(det_df, height=400, color_rows=True):
     """Renderiza tabela HTML com cabeçalho vinho garantido e linhas coloridas"""
     def row_colors(row):
-        du = row.get("DU")
+        du = row.get("_du") if "_du" in row else row.get("DU")
         incons = str(row.get("Inconsistência","") or "")
         tipo = str(row.get("Tipo","") or "")
         if not color_rows: return "", ""
@@ -423,12 +425,14 @@ def render_html_table(det_df, height=400, color_rows=True):
         return "#C6EFCE", "#000000"
 
     cols = det_df.columns.tolist()
-    thead = "".join(f"<th>{c}</th>" for c in cols)
+    visible_cols = [c for c in cols if not c.startswith("_")]
+    thead = "".join(f"<th>{c}</th>" for c in visible_cols)
     rows_html = []
     for _, row in det_df.iterrows():
         bg, fg = row_colors(row)
         style = f'style="background-color:{bg};color:{fg}"' if bg else ""
-        tds = "".join(f"<td>{'' if pd.isna(v) else v}</td>" for v in row.tolist())
+        row_vals = [(col, val) for col, val in zip(cols, row.tolist()) if not col.startswith("_")]
+        tds = "".join(f"<td>{'' if pd.isna(v) else v}</td>" for _, v in row_vals)
         rows_html.append(f"<tr {style}>{tds}</tr>")
 
     html = f'''
@@ -645,13 +649,7 @@ def page_geral(registros):
         top10.columns = ["Responsável","Qtd"]
         chart_bar_h(top10, "Qtd", "Responsável", "Top 10", "#7E1F2D")
 
-    incons_df = active[active.incons != ""]
-    if not incons_df.empty:
-        st.markdown('<div class="section-title">Top 10 Responsáveis — Inconsistências</div>', unsafe_allow_html=True)
-        top_inc = (incons_df.groupby("resp").size().reset_index(name="Qtd")
-                   .sort_values("Qtd", ascending=False).head(10))
-        top_inc.columns = ["Responsável","Qtd"]
-        chart_bar_h(top_inc, "Qtd", "Responsável", "Top Inconsistências", "#CDA736")
+
 
 def page_coordenador(registros):
     render_header("Por Coordenação")
@@ -701,14 +699,13 @@ def page_coordenador(registros):
         for resp_name, grp in active.groupby("resp", sort=False):
             resumo_rows.append({
                 "Responsável": resp_name,
-                "Status": "Inativo" if grp["inativo"].any() else "Ativo",
+                
                 "Prazo": int((grp["tipo"]=="Prazo").sum()),
                 "Audiência": int((grp["tipo"]=="Audiência").sum()),
-                "Diversos": int((grp["tipo"]=="Diversos").sum()),
+                "Diversos": int((grp["tipo"].isin(["Diversos"]) | ~grp["tipo"].isin(["Prazo","Audiência","Pauta de Julgamento","Perícia","Publicação"])).sum()),
                 "Pauta de Julgamento": int((grp["tipo"]=="Pauta de Julgamento").sum()),
                 "Perícia": int((grp["tipo"]=="Perícia").sum()),
                 "Publicação": int((grp["tipo"]=="Publicação").sum()),
-                "Outros": int((~grp["tipo"].isin(["Prazo","Audiência","Diversos","Pauta de Julgamento","Perícia","Publicação"])).sum()),
                 "Total": len(grp),
                 "Inconsistências": int((grp["incons"]!="").sum()),
             })
@@ -719,7 +716,7 @@ def page_coordenador(registros):
     st.markdown('<div class="section-title">Detalhamento</div>', unsafe_allow_html=True)
     render_color_legend()
     det = active[["processo","cliente","num_proc","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
-    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
+    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","_du","Inconsistência"]
     render_html_table(det, height=380)
 
     buf = exportar_xlsx_filtrado(active.to_dict("records"))
@@ -773,7 +770,7 @@ def page_responsavel(registros):
     st.markdown('<div class="section-title">Atividades</div>', unsafe_allow_html=True)
     render_color_legend()
     det = df[["processo","cliente","num_proc","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
-    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
+    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","_du","Inconsistência"]
     render_html_table(det, height=450)
 
     buf = exportar_xlsx_filtrado(df.to_dict("records"))
@@ -821,7 +818,7 @@ def page_auditoria(registros):
     st.markdown('<div class="section-title">Registros com Inconsistências</div>', unsafe_allow_html=True)
     render_color_legend()
     det = df_inc[["processo","cliente","num_proc","tipo","desc","coord_display","resp","conclusao","du","incons"]].copy()
-    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","DU","Inconsistência"]
+    det.columns = ["Processo","Cliente","Nº Processo","Tipo","Descrição","Coordenador","Responsável","Conclusão","_du","Inconsistência"]
     render_html_table(det, height=450)
 
     buf = exportar_xlsx_filtrado(df_inc.to_dict("records"))
