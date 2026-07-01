@@ -72,6 +72,12 @@ def parse_date(val):
         except: pass
     return None
 
+def normalizar_tipo(tipo):
+    """Unifica Diligência Externa, Workflow e Serviço em Diversos"""
+    if tipo in ("Diligência externa","Workflow","Serviço"):
+        return "Diversos"
+    return tipo
+
 def extract_fatal(desc):
     if not isinstance(desc, str): return None
     m = re.search(r"FATAL[\\s:]+(\d{2})/(\d{2})/(\d{4})", desc, re.IGNORECASE)
@@ -138,11 +144,11 @@ def construir_registros(df, today):
         conclusao = parse_date(row.get("Conclusão prevista"))
         if not conclusao: continue
         du = busdays(today, conclusao)
-        if du is None or du > 1: continue
+        if du is None or du > 0: continue
         id_ = str(row.get("Id","")).strip()
         pasta = str(row.get("Pasta","")).strip()
         processo = pasta if pasta and pasta not in ("","nan","None") else id_
-        tipo = str(row.get("Tipo","")).strip()
+        tipo = normalizar_tipo(str(row.get("Tipo","")).strip())
         desc = str(row.get("Descrição","")).strip()
         resp = str(row.get("Responsavel processo","") or row.get("Responsável processo","")).strip()
         if not resp or resp in ("nan","None"):
@@ -229,7 +235,7 @@ def apply_row_style(ws, row_num, du, incons, tipo, num_cols):
         ws.cell(row=row_num, column=col).font = font
 
 COLS_DETAIL = ["Processo","Cliente","Número do Processo","Tipo","Descrição","Coordenador","Responsável","Status","Conclusão Prevista","Dias Úteis","Inconsistência"]
-COLS_RESUMO = ["Responsável","Status","Prazo","Audiência","Diversos","Workflow","Publicação","Outros","Total","Inconsistências"]
+COLS_RESUMO = ["Responsável","Status","Prazo","Audiência","Diversos","Pauta de Julgamento","Perícia","Publicação","Outros","Total","Inconsistências"]
 
 def write_sheet(ws, data_rows, cols, is_resumo=False):
     hfill = make_header_fill(); hfont = make_header_font(); halign = make_header_align()
@@ -265,9 +271,9 @@ def gerar_excel_coord(coord_key, registros, coord_display):
         rp = r["resp"]
         if rp not in by_resp:
             by_resp[rp] = {"Responsável":rp,"Status":"Inativo" if r["inativo"] else "Ativo",
-                           "Prazo":0,"Audiência":0,"Diversos":0,"Workflow":0,"Publicação":0,"Outros":0,"Total":0,"Inconsistências":0}
+                           "Prazo":0,"Audiência":0,"Diversos":0,"Pauta de Julgamento":0,"Perícia":0,"Publicação":0,"Outros":0,"Total":0,"Inconsistências":0}
         t = r["tipo"]
-        if t in ("Prazo","Audiência","Diversos","Workflow","Publicação"): by_resp[rp][t] += 1
+        if t in ("Prazo","Audiência","Diversos","Pauta de Julgamento","Perícia","Publicação"): by_resp[rp][t] += 1
         else: by_resp[rp]["Outros"] += 1
         by_resp[rp]["Total"] += 1
         if r["incons"]: by_resp[rp]["Inconsistências"] += 1
@@ -376,11 +382,12 @@ def render_header(subtitle=""):
         </div>
     </div>""", unsafe_allow_html=True)
 
-def card(kicker, value, label, color=""):
+def card(kicker, value, label="", color=""):
+    label_html = f'<div class="metric-label">{label}</div>' if label else ""
     return f'''<div class="metric-card {color}">
         <div class="metric-kicker">{kicker}</div>
         <div class="metric-value">{value}</div>
-        <div class="metric-label">{label}</div>
+        {label_html}
     </div>'''
 
 def render_color_legend():
@@ -550,7 +557,7 @@ def render_sidebar():
         </div>''', unsafe_allow_html=True)
         st.divider()
         page = st.radio("NAV", [
-            "📊 Visão Geral","👥 Por Coordenador","👤 Por Responsável",
+            "📊 Visão Geral","👥 Por Coordenação",
             "🔍 Auditoria","📥 Exportação","⚙️ Área Administrativa",
         ], label_visibility="collapsed")
         st.divider()
@@ -606,16 +613,15 @@ def page_geral(registros):
     active = df[~df["resp"].isin(EXCLUDED_SET)]
 
     st.markdown('<div class="section-title">Resumo</div>', unsafe_allow_html=True)
-    cols = st.columns(8)
+    cols = st.columns(7)
     cards_data = [
-        ("Total",fmt_num(len(active)),"Atividades até D-1",""),
-        ("Prazos",fmt_num(len(active[active.tipo=="Prazo"])),"Tipo Prazo","rose"),
-        ("Audiências",fmt_num(len(active[active.tipo=="Audiência"])),"Tipo Audiência",""),
-        ("Diversos",fmt_num(len(active[active.tipo=="Diversos"])),"Tipo Diversos","gold"),
-        ("Inconsistências",fmt_num(len(active[active.incons!=""])),"Com alerta","rose"),
-        ("Coordenadores",fmt_num(active["coord"].nunique()),"Com pendências",""),
-        ("Ativos",fmt_num(active[~active.inativo]["resp"].nunique()),"Responsáveis","green"),
-        ("Inativos",fmt_num(active[active.inativo]["resp"].nunique()),"Responsáveis",""),
+        ("Total",fmt_num(len(active)),"",""),
+        ("Prazos",fmt_num(len(active[active.tipo=="Prazo"])),"","rose"),
+        ("Audiências",fmt_num(len(active[active.tipo=="Audiência"])),"",""),
+        ("Diversos",fmt_num(len(active[active.tipo=="Diversos"])),"","gold"),
+        ("Pauta de Julgamento",fmt_num(len(active[active.tipo=="Pauta de Julgamento"])),"",""),
+        ("Perícia",fmt_num(len(active[active.tipo=="Perícia"])),"",""),
+        ("Publicação",fmt_num(len(active[active.tipo=="Publicação"])),"","rose"),
     ]
     for i,(k,v,l,c) in enumerate(cards_data):
         with cols[i]: st.markdown(card(k,v,l,c), unsafe_allow_html=True)
@@ -648,7 +654,7 @@ def page_geral(registros):
         chart_bar_h(top_inc, "Qtd", "Responsável", "Top Inconsistências", "#CDA736")
 
 def page_coordenador(registros):
-    render_header("Por Coordenador")
+    render_header("Por Coordenação")
     df = get_df_filters(registros, "c")
     if df.empty: st.info("Nenhum dado disponível."); return
 
@@ -674,13 +680,15 @@ def page_coordenador(registros):
     if proc_f: df = df[df["processo"].str.contains(proc_f, case=False, na=False)]
     active = df[~df["resp"].isin(EXCLUDED_SET)]
 
-    cols = st.columns(5)
+    cols = st.columns(7)
     for i,(k,v,l,c) in enumerate([
-        ("Total",fmt_num(len(active)),"Filtrados",""),
-        ("Prazos",fmt_num(len(active[active.tipo=="Prazo"])),"Tipo Prazo","rose"),
-        ("Audiências",fmt_num(len(active[active.tipo=="Audiência"])),"Tipo Audiência",""),
-        ("Diversos",fmt_num(len(active[active.tipo=="Diversos"])),"Tipo Diversos","gold"),
-        ("Inconsistências",fmt_num(len(active[active.incons!=""])),"Com alertas","rose"),
+        ("Total",fmt_num(len(active)),"",""),
+        ("Prazos",fmt_num(len(active[active.tipo=="Prazo"])),"","rose"),
+        ("Audiências",fmt_num(len(active[active.tipo=="Audiência"])),"",""),
+        ("Diversos",fmt_num(len(active[active.tipo=="Diversos"])),"","gold"),
+        ("Pauta de Julgamento",fmt_num(len(active[active.tipo=="Pauta de Julgamento"])),"",""),
+        ("Perícia",fmt_num(len(active[active.tipo=="Perícia"])),"",""),
+        ("Publicação",fmt_num(len(active[active.tipo=="Publicação"])),"","rose"),
     ]):
         with cols[i]: st.markdown(card(k,v,l,c), unsafe_allow_html=True)
 
@@ -697,9 +705,10 @@ def page_coordenador(registros):
                 "Prazo": int((grp["tipo"]=="Prazo").sum()),
                 "Audiência": int((grp["tipo"]=="Audiência").sum()),
                 "Diversos": int((grp["tipo"]=="Diversos").sum()),
-                "Workflow": int((grp["tipo"]=="Workflow").sum()),
+                "Pauta de Julgamento": int((grp["tipo"]=="Pauta de Julgamento").sum()),
+                "Perícia": int((grp["tipo"]=="Perícia").sum()),
                 "Publicação": int((grp["tipo"]=="Publicação").sum()),
-                "Outros": int((~grp["tipo"].isin(["Prazo","Audiência","Diversos","Workflow","Publicação"])).sum()),
+                "Outros": int((~grp["tipo"].isin(["Prazo","Audiência","Diversos","Pauta de Julgamento","Perícia","Publicação"])).sum()),
                 "Total": len(grp),
                 "Inconsistências": int((grp["incons"]!="").sum()),
             })
@@ -957,8 +966,7 @@ def main():
     registros = pub.get("registros", [])
 
     if page == "📊 Visão Geral": page_geral(registros)
-    elif page == "👥 Por Coordenador": page_coordenador(registros)
-    elif page == "👤 Por Responsável": page_responsavel(registros)
+    elif page == "👥 Por Coordenação": page_coordenador(registros)
     elif page == "🔍 Auditoria": page_auditoria(registros)
     elif page == "📥 Exportação": page_exportacao(registros)
     elif page == "⚙️ Área Administrativa": page_admin()
